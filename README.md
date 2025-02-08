@@ -12,6 +12,78 @@
 
 </div>
 
+> ⚠️ **IMPORTANT NOTICE**
+> 
+> This tool currently supports:
+> - ✅ Cursor v0.44.11 and below
+> - ✅ Windows: Latest 0.45.x versions (Supported)
+> - ✅ Mac/Linux: Latest 0.45.x versions (Supported, feedback welcome)
+>
+> Please check your Cursor version before using this tool.
+>
+> ⚠️ **MAC Address Modification Warning**
+> 
+> For Mac users: This script includes a MAC address modification feature that will:
+> - Modify your network interface's MAC address
+> - Backup original MAC addresses before modification
+> - This modification may temporarily affect network connectivity
+> - You can skip this step when prompted during execution
+>
+> 💾 **Download Cursor v0.44.11**
+> 
+> Windows:
+> - [Download from Cursor Official](https://downloader.cursor.sh/builds/250103fqxdt5u9z/windows/nsis/x64)
+> - [Download from ToDesktop](https://download.todesktop.com/230313mzl4w4u92/Cursor%20Setup%200.44.11%20-%20Build%20250103fqxdt5u9z-x64.exe)
+>
+> Mac:
+> - [Download for Mac (Apple Silicon)](https://dl.todesktop.com/230313mzl4w4u92/versions/0.44.11/mac/zip/arm64)
+
+<details >
+<summary><b>🔒 Disable Auto-Update Feature</b></summary>
+
+> To prevent Cursor from automatically updating to unsupported new versions, you can choose to disable the auto-update feature.
+
+#### Method 1: Using Built-in Script (Recommended)
+
+When running the reset tool, the script will ask if you want to disable auto-updates:
+```text
+[Question] Do you want to disable Cursor auto-update feature?
+0) No - Keep default settings (Press Enter)
+1) Yes - Disable auto-update
+```
+
+Select `1` to automatically complete the disable operation.
+
+#### Method 2: Manual Disable
+
+**Windows:**
+1. Close all Cursor processes
+2. Delete directory: `%LOCALAPPDATA%\cursor-updater`
+3. Create a file with the same name (without extension) in the same location
+
+**macOS:**
+```bash
+# Close Cursor
+pkill -f "Cursor"
+# Remove update directory and create blocking file
+rm -rf ~/Library/Application\ Support/cursor-updater
+touch ~/Library/Application\ Support/cursor-updater
+```
+
+**Linux:**
+```bash
+# Close Cursor
+pkill -f "Cursor"
+# Remove update directory and create blocking file
+rm -rf ~/.config/cursor-updater
+touch ~/.config/cursor-updater
+```
+
+> ⚠️ **Note:** After disabling auto-updates, you'll need to manually download and install new versions. It's recommended to update only after confirming the new version is compatible.
+
+
+</details>
+
 ---
 
 ### 📝 Description
@@ -150,7 +222,7 @@ irm https://raw.githubusercontent.com/yuaotian/go-cursor-help/refs/heads/master/
 **macOS**
 
 ```bash
-curl -fsSL https://aizaozao.com/accelerate.php/c | sudo bash
+curl -fsSL https://aizaozao.com/accelerate.php/https://raw.githubusercontent.com/yuaotian/go-cursor-help/refs/heads/master/scripts/run/cursor_mac_id_modifier.sh | sudo bash
 ```
 
 **Linux**
@@ -311,6 +383,40 @@ macOS/Linux users can try to locate similar `cursor-updater` directory in their 
 - ✅ Error handling and recovery
 </details>
 
+<details>
+<summary><b>Registry Modification Notice</b></summary>
+
+> ⚠️ **Important: This tool modifies the Windows Registry**
+
+#### Modified Registry
+- Path: `Computer\HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`
+- Key: `MachineGuid`
+
+#### Potential Impact
+Modifying this registry key may affect:
+- Windows system's unique device identification
+- Device recognition and authorization status of certain software
+- System features based on hardware identification
+
+#### Safety Measures
+1. Automatic Backup
+   - Original value is automatically backed up before modification
+   - Backup location: `%APPDATA%\Cursor\User\globalStorage\backups`
+   - Backup file format: `MachineGuid.backup_YYYYMMDD_HHMMSS`
+
+2. Manual Recovery Steps
+   - Open Registry Editor (regedit)
+   - Navigate to: `Computer\HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`
+   - Right-click on `MachineGuid`
+   - Select "Modify"
+   - Paste the value from backup file
+
+#### Important Notes
+- Verify backup file existence before modification
+- Use backup file to restore original value if needed
+- Administrator privileges required for registry modification
+</details>
+
 ---
 
 ### 📚 Recommended Reading
@@ -348,3 +454,4 @@ The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
 </details>
+

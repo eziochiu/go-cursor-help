@@ -112,6 +112,32 @@ check_and_kill_cursor() {
     exit 1
 }
 
+# 备份系统 ID
+backup_system_id() {
+    log_info "正在备份系统 ID..."
+    local system_id_file="$BACKUP_DIR/system_id.backup_$(date +%Y%m%d_%H%M%S)"
+    
+    # 获取并备份 machine-id
+    {
+        echo "# Original Machine ID Backup" > "$system_id_file"
+        echo "## /var/lib/dbus/machine-id:" >> "$system_id_file"
+        cat /var/lib/dbus/machine-id 2>/dev/null >> "$system_id_file" || echo "Not found" >> "$system_id_file"
+        
+        echo -e "\n## /etc/machine-id:" >> "$system_id_file"
+        cat /etc/machine-id 2>/dev/null >> "$system_id_file" || echo "Not found" >> "$system_id_file"
+        
+        echo -e "\n## hostname:" >> "$system_id_file"
+        hostname >> "$system_id_file"
+        
+        chmod 444 "$system_id_file"
+        chown "$CURRENT_USER:$CURRENT_USER" "$system_id_file"
+        log_info "系统 ID 已备份到: $system_id_file"
+    } || {
+        log_error "备份系统 ID 失败"
+        return 1
+    }
+}
+
 # 备份配置文件
 backup_config() {
     # 检查文件权限
@@ -154,49 +180,76 @@ generate_uuid() {
 generate_new_config() {
     # 错误处理
     if ! command -v xxd &> /dev/null; then
-        log_error "未找到 xxd 命令，请安装 xxd"
+        log_error "未找到 xxd 命令，请安装 xxd,使用 apt-get install xxd"
         exit 1
     fi
     
     if ! command -v uuidgen &> /dev/null; then
-        log_error "未找到 uuidgen 命令，请安装 uuidgen"
+        log_error "未找到 uuidgen 命令，请安装 uuidgen,使用 apt-get install uuid-runtime"
         exit 1
     fi
     
-    # 确保目录存在
-    mkdir -p "$(dirname "$STORAGE_FILE")"
+    # 检查配置文件是否存在
+    if [ ! -f "$STORAGE_FILE" ]; then
+        log_error "未找到配置文件: $STORAGE_FILE"
+        log_warn "请先安装并运行一次 Cursor 后再使用此脚本"
+        exit 1
+    fi
+    
+    # 修改系统 machine-id
+    if [ -f "/etc/machine-id" ]; then
+        log_info "正在修改系统 machine-id..."
+        local new_machine_id=$(uuidgen | tr -d '-')
+        
+        # 备份原始 machine-id
+        backup_system_id
+        
+        # 修改 machine-id
+        echo "$new_machine_id" | sudo tee /etc/machine-id > /dev/null
+        if [ -f "/var/lib/dbus/machine-id" ]; then
+            sudo ln -sf /etc/machine-id /var/lib/dbus/machine-id
+        fi
+        log_info "系统 machine-id 已更新"
+    fi
     
     # 将 auth0|user_ 转换为字节数组的十六进制
-    local prefix_hex=$(echo -n "auth0|user_" | xxd -p)
-    # 生成随机部分
-    local random_part=$(generate_random_id)
-    # 拼接前缀的十六进制和随机部分
-    local machine_id="${prefix_hex}${random_part}"
+    local machine_id="auth0|user_$(generate_random_id | cut -c 1-32)"
     
     local mac_machine_id=$(generate_random_id)
     local device_id=$(generate_uuid | tr '[:upper:]' '[:lower:]')
     local sqm_id="{$(generate_uuid | tr '[:lower:]' '[:upper:]')}"
     
-    if [ -f "$STORAGE_FILE" ]; then
-        # 直接修改现有文件
-        sed -i "s|\"telemetry\.machineId\":[[:space:]]*\"[^\"]*\"|\"telemetry.machineId\": \"$machine_id\"|" "$STORAGE_FILE"
-        sed -i "s|\"telemetry\.macMachineId\":[[:space:]]*\"[^\"]*\"|\"telemetry.macMachineId\": \"$mac_machine_id\"|" "$STORAGE_FILE"
-        sed -i "s|\"telemetry\.devDeviceId\":[[:space:]]*\"[^\"]*\"|\"telemetry.devDeviceId\": \"$device_id\"|" "$STORAGE_FILE"
-        sed -i "s|\"telemetry\.sqmId\":[[:space:]]*\"[^\"]*\"|\"telemetry.sqmId\": \"$sqm_id\"|" "$STORAGE_FILE"
-    else
-        # 创建新文件
-        cat > "$STORAGE_FILE" << EOF
-{
-    "telemetry.machineId": "$machine_id",
-    "telemetry.macMachineId": "$mac_machine_id",
-    "telemetry.devDeviceId": "$device_id",
-    "telemetry.sqmId": "$sqm_id"
-}
-EOF
-    fi
+    # 增强的转义函数
+    escape_sed_replacement() {
+        echo "$1" | sed -e 's/[\/&]/\\&/g'
+    }
 
-    chmod 644 "$STORAGE_FILE"
+    # 对变量进行转义处理
+    machine_id_escaped=$(escape_sed_replacement "$machine_id")
+    mac_machine_id_escaped=$(escape_sed_replacement "$mac_machine_id")
+    device_id_escaped=$(escape_sed_replacement "$device_id")
+    sqm_id_escaped=$(escape_sed_replacement "$sqm_id")
+
+    # 使用增强正则表达式和转义
+    sed -i "s|\"telemetry\.machineId\": *\"[^\"]*\"|\"telemetry.machineId\": \"${machine_id_escaped}\"|" "$STORAGE_FILE"
+    sed -i "s|\"telemetry\.macMachineId\": *\"[^\"]*\"|\"telemetry.macMachineId\": \"${mac_machine_id_escaped}\"|" "$STORAGE_FILE"
+    sed -i "s|\"telemetry\.devDeviceId\": *\"[^\"]*\"|\"telemetry.devDeviceId\": \"${device_id_escaped}\"|" "$STORAGE_FILE"
+    sed -i "s|\"telemetry\.sqmId\": *\"[^\"]*\"|\"telemetry.sqmId\": \"${sqm_id_escaped}\"|" "$STORAGE_FILE"
+
+    # 设置文件权限和所有者
+    chmod 444 "$STORAGE_FILE"  # 改为只读权限
     chown "$CURRENT_USER:$CURRENT_USER" "$STORAGE_FILE"
+    
+    # 验证权限设置
+    if [ -w "$STORAGE_FILE" ]; then
+        log_warn "无法设置只读权限，尝试使用其他方法..."
+        # 在 Linux 上使用 chattr 命令设置不可修改属性
+        if command -v chattr &> /dev/null; then
+            chattr +i "$STORAGE_FILE" 2>/dev/null || log_warn "chattr 设置失败"
+        fi
+    else
+        log_info "成功设置文件只读权限"
+    fi
     
     echo
     log_info "已更新配置:"
@@ -204,6 +257,18 @@ EOF
     log_debug "macMachineId: $mac_machine_id"
     log_debug "devDeviceId: $device_id"
     log_debug "sqmId: $sqm_id"
+
+    # 在generate_new_config函数末尾添加验证
+    log_info "验证配置文件有效性..."
+    if ! command -v jq &> /dev/null; then
+        log_warn "未找到jq命令，跳过JSON验证"
+    else
+        if ! jq empty "$STORAGE_FILE" &> /dev/null; then
+            log_error "配置文件格式错误，正在恢复备份..."
+            cp "$(ls -t "$BACKUP_DIR"/storage.json.backup_* | head -1)" "$STORAGE_FILE"
+            exit 1
+        fi
+    fi
 }
 
 # 显示文件树结构
@@ -241,10 +306,90 @@ show_follow_info() {
     echo
 }
 
+# 修改 disable_auto_update 函数,在失败处理时添加手动教程
+disable_auto_update() {
+    echo
+    log_warn "是否要禁用 Cursor 自动更新功能？"
+    echo "0) 否 - 保持默认设置 (按回车键)"
+    echo "1) 是 - 禁用自动更新"
+    read -r choice
+    
+    if [ "$choice" = "1" ]; then
+        echo
+        log_info "正在处理自动更新..."
+        local updater_path="$HOME/.config/cursor-updater"
+        
+        # 定义手动设置教程
+        show_manual_guide() {
+            echo
+            log_warn "自动设置失败,请尝试手动操作："
+            echo -e "${YELLOW}手动禁用更新步骤：${NC}"
+            echo "1. 打开终端"
+            echo "2. 复制粘贴以下命令："
+            echo -e "${BLUE}rm -rf \"$updater_path\" && touch \"$updater_path\" && chmod 444 \"$updater_path\"${NC}"
+            echo
+            echo -e "${YELLOW}如果上述命令提示权限不足，请使用 sudo：${NC}"
+            echo -e "${BLUE}sudo rm -rf \"$updater_path\" && sudo touch \"$updater_path\" && sudo chmod 444 \"$updater_path\"${NC}"
+            echo
+            echo -e "${YELLOW}如果要添加额外保护（推荐），请执行：${NC}"
+            echo -e "${BLUE}sudo chattr +i \"$updater_path\"${NC}"
+            echo
+            echo -e "${YELLOW}验证方法：${NC}"
+            echo "1. 运行命令：ls -l \"$updater_path\""
+            echo "2. 确认文件权限为 r--r--r--"
+            echo "3. 运行命令：lsattr \"$updater_path\""
+            echo "4. 确认有 'i' 属性（如果执行了 chattr 命令）"
+            echo
+            log_warn "完成后请重启 Cursor"
+        }
+        
+        if [ -d "$updater_path" ]; then
+            rm -rf "$updater_path" 2>/dev/null || {
+                log_error "删除 cursor-updater 目录失败"
+                show_manual_guide
+                return 1
+            }
+            log_info "成功删除 cursor-updater 目录"
+        fi
+        
+        touch "$updater_path" 2>/dev/null || {
+            log_error "创建阻止文件失败"
+            show_manual_guide
+            return 1
+        }
+        
+        if ! chmod 444 "$updater_path" 2>/dev/null || ! chown "$CURRENT_USER:$CURRENT_USER" "$updater_path" 2>/dev/null; then
+            log_error "设置文件权限失败"
+            show_manual_guide
+            return 1
+        fi
+        
+        # 尝试设置不可修改属性
+        if command -v chattr &> /dev/null; then
+            chattr +i "$updater_path" 2>/dev/null || {
+                log_warn "chattr 设置失败"
+                show_manual_guide
+                return 1
+            }
+        fi
+        
+        # 验证设置是否成功
+        if [ ! -f "$updater_path" ] || [ -w "$updater_path" ]; then
+            log_error "验证失败：文件权限设置可能未生效"
+            show_manual_guide
+            return 1
+        fi
+        
+        log_info "成功禁用自动更新"
+    else
+        log_info "保持默认设置，不进行更改"
+    fi
+}
+
 # 主函数
 main() {
     clear
-    # 显示 CURSOR Logo
+    # 显示 Logo
     echo -e "
     ██████╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ 
    ██╔════╝██║   ██║██╔══██╗██╔════╝██╔═══██╗██╔══██╗
@@ -254,8 +399,13 @@ main() {
     ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝
     "
     echo -e "${BLUE}================================${NC}"
-    echo -e "${GREEN}      Cursor ID 修改工具${NC}"
+    echo -e "${GREEN}   Cursor 设备ID 修改工具          ${NC}"
+    echo -e "${YELLOW}  关注公众号【煎饼果子卷AI】     ${NC}"
+    echo -e "${YELLOW}  一起交流更多Cursor技巧和AI知识(脚本免费、关注公众号加群有更多技巧和大佬)  ${NC}"
     echo -e "${BLUE}================================${NC}"
+    echo
+    echo -e "${YELLOW}[重要提示]${NC} 本工具支持 Cursor v0.45.x"
+    echo -e "${YELLOW}[重要提示]${NC} 本工具免费，如果对您有帮助，请关注公众号【煎饼果子卷AI】"
     echo
     
     check_permissions
@@ -268,7 +418,8 @@ main() {
     show_follow_info
     show_file_tree
     log_info "请重启 Cursor 以应用新的配置"
-    echo
+    
+    disable_auto_update
 }
 
 # 执行主函数
